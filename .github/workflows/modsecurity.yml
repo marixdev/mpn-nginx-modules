@@ -1,0 +1,83 @@
+name: ModSecurity connector for nginx.org
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release with this tag (empty: only build and test)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/modsecurity.yml"
+      - "scripts/build-modsecurity.sh"
+      - "scripts/install-nginx-org.sh"
+
+permissions:
+  contents: read
+
+env:
+  NGINX_VERSION: "1.28.3"
+  NGINX_SHA256: "2c96a946bfb0882a21744ed429770a2123ae1828c7c48665092993ddee91a918"
+  CONNECTOR_VERSION: "1.0.4"
+  CONNECTOR_SHA256: "6bdc7570911be884c1e43aaf85046137f9fde0cfa0dd4a55b853c81c45a13313"
+
+jobs:
+  build:
+    name: ${{ matrix.codename }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { codename: jammy, family: ubuntu, image: "ubuntu:22.04" }
+          - { codename: noble, family: ubuntu, image: "ubuntu:24.04" }
+          - { codename: resolute, family: ubuntu, image: "ubuntu:26.04" }
+          - { codename: bookworm, family: debian, image: "debian:12" }
+          - { codename: trixie, family: debian, image: "debian:13" }
+    steps:
+      - name: Tools the checkout needs
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build against nginx ${{ env.NGINX_VERSION }} and test
+        run: bash scripts/build-modsecurity.sh "${{ matrix.codename }}" "${{ matrix.family }}" "$PWD/out"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: modsecurity-${{ matrix.codename }}
+          path: out/
+          if-no-files-found: warn
+
+  release:
+    name: Publish
+    needs: build
+    if: ${{ inputs.release_tag != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: modsecurity-*
+          merge-multiple: true
+          path: dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          sha256sum ./*.so > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$TAG" ./*.so ./info-*.txt SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --title "ModSecurity connector ${CONNECTOR_VERSION} for nginx.org ${NGINX_VERSION}" \
+            --notes "ModSecurity-nginx ${CONNECTOR_VERSION} built against nginx ${NGINX_VERSION} (nginx.org package) with the arguments of that package, one file per distribution, each loaded and tested against the OWASP Core Rule Set in a container of its own distribution. Install libmodsecurity3 from the distribution and load the file with load_module."

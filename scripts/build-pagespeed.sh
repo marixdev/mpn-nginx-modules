@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Builds ngx_pagespeed_module.so for nginx.org's nginx with the build scripts of We-Amp/mod_pagespeed, inside a container of the target
+# distribution, then loads it into the nginx.org package of the same version and checks that PageSpeed rewrites a page.
+# Runs on a GitHub-hosted runner (it needs docker).
+#   build-pagespeed.sh <distro> <nginx version> <nginx sha256> <We-Amp module tag> <outdir>
+set -euo pipefail
+distro="${1:?noble|jammy|bookworm|trixie|resolute}"
+ngx="${2:?nginx version}"
+ngxsha="${3:?nginx sha256}"
+tag="${4:?module tag, such as module-v2.8.1}"
+out="${5:?output directory}"
+here="$(cd "$(dirname "$0")" && pwd)"
+
+case "$distro" in
+  jammy) image="ubuntu:22.04"; family=ubuntu ;;
+  noble) image="ubuntu:24.04"; family=ubuntu ;;
+  resolute) image="ubuntu:26.04"; family=ubuntu ;;
+  bookworm) image="debian:12"; family=debian ;;
+  trixie) image="debian:13"; family=debian ;;
+  *) echo "unknown distro: $distro" >&2; exit 2 ;;
+esac
+[[ "$ngx" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad nginx version" >&2; exit 2; }
+[[ "$ngxsha" =~ ^[0-9a-f]{64}$ ]] || { echo "bad nginx sha256" >&2; exit 2; }
+[[ "$tag" =~ ^module-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad module tag" >&2; exit 2; }
+ver="${tag#module-v}"
+
+mkdir -p "$out"
+tmp="$(mktemp -d)"
+base="https://github.com/We-Amp/mod_pagespeed/releases/download/${tag}"
+curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"
+curl -fsSL -o "$tmp/src.tgz" "$base/mod_pagespeed-${ver}.tar.gz"
+want="$(awk -v f="mod_pagespeed-${ver}.tar.gz" '$2==f{print $1}' "$tmp/SHA256SUMS")"
+[ -n "$want" ] && [ "$(sha256sum "$tmp/src.tgz" | cut -d' ' -f1)" = "$want" ] || { echo "the source does not match its published checksum" >&2; exit 1; }
+echo "source verified: $want"
+mkdir -p "$tmp/ws"
+tar xzf "$tmp/src.tgz" -C "$tmp/ws" --strip-components=1
+rm -f "$tmp/src.tgz"
+df -h / | tail -1
+
+mkdir -p "$tmp/ws/out"
+cores="$(nproc)"
+docker run --rm --init -e HOME=/workspace -e BAZEL_CPUS="$cores" -e MAKE_JOBS="$cores" \
+  -e NGX_SRC_MODE_OVERRIDE=vanilla -e NGINX_SRC_VERSION="$ngx" -e NGINX_SRC_SHA256="$ngxsha" \
+  -v "$tmp/ws":/workspace -w /workspace "$image" \
+  ./install/nginx/build_module_in_container.sh "$distro" -o "/workspace/out/ngx_pagespeed_module-${distro}-nginx${ngx}.so"
+
+so="$out/ngx_pagespeed_module-${distro}-nginx${ngx}.so"
+cp "$tmp/ws/out/ngx_pagespeed_module-${distro}-nginx${ngx}.so" "$so"
+ls -l "$so"
+
+# --- test in a clean container of the same distribution -------------------------------------------------------------------------
+cp "$here/install-nginx-org.sh" "$tmp/"
+cat > "$tmp/check.sh" << 'EOS'
+set -euo pipefail
+codename="$1"; family="$2"; ngx="$3"; so="$4"
+bash /t/install-nginx-org.sh "$codename" "$family" "$ngx"
+mkdir -p /w/www /w/cache
+printf '<html><head></head><body>\n\n   <p>  hello   </p>\n\n<!-- a comment -->\n<img src="/x.png">\n</body></html>\n' > /w/www/index.html
+cat > /w/nginx.conf << EOF
+load_module $so;
+pid /w/nginx.pid;
+error_log /w/error.log info;
+events { worker_connections 64; }
+http {
+  access_log off;
+  pagespeed FileCachePath /w/cache;
+  server {
+    listen 127.0.0.1:18082;
+    pagespeed on;
+    pagespeed RewriteLevel CoreFilters;
+    pagespeed EnableFilters remove_comments,collapse_whitespace;
+    root /w/www;
+  }
+}
+EOF
+nginx -t -c /w/nginx.conf
+nginx -c /w/nginx.conf
+sleep 2
+curl -s -D /w/h.txt -o /w/body.txt http://127.0.0.1:18082/index.html || true
+curl -s -D /w/h.txt -o /w/body.txt http://127.0.0.1:18082/index.html
+cat /w/h.txt
+cat /w/body.txt
+nginx -s stop -c /w/nginx.conf || true
+grep -qi '^x-page-speed:' /w/h.txt || { echo "FAIL  no X-Page-Speed header: the module did not process the page"; tail -20 /w/error.log; exit 1; }
+if grep -q 'a comment' /w/body.txt; then echo "FAIL  the comment was not removed"; exit 1; fi
+echo "ok    PageSpeed processed the page"
+EOS
+docker run --rm -v "$tmp":/t -v "$so":"/t/module.so":ro "$image" bash /t/check.sh "$distro" "$family" "$ngx" /t/module.so

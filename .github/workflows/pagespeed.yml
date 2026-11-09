@@ -1,0 +1,71 @@
+name: PageSpeed module for nginx.org
+
+on:
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: "jammy, noble, resolute, bookworm or trixie"
+        required: true
+        default: noble
+      nginx_version:
+        description: "nginx.org version to build for"
+        required: true
+        default: "1.28.3"
+      nginx_sha256:
+        description: "SHA-256 of nginx-<version>.tar.gz"
+        required: true
+        default: "2c96a946bfb0882a21744ed429770a2123ae1828c7c48665092993ddee91a918"
+      module_tag:
+        description: "Release of We-Amp/mod_pagespeed to build"
+        required: true
+        default: "module-v2.8.1"
+      release_tag:
+        description: "Publish a release with this tag (empty: only build and test)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ inputs.distro }}, nginx ${{ inputs.nginx_version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af > /dev/null
+          df -h /
+          free -m
+          nproc
+      - name: Build and test
+        env:
+          DISTRO: ${{ inputs.distro }}
+          NGX: ${{ inputs.nginx_version }}
+          NGX_SHA: ${{ inputs.nginx_sha256 }}
+          TAG: ${{ inputs.module_tag }}
+        run: bash scripts/build-pagespeed.sh "$DISTRO" "$NGX" "$NGX_SHA" "$TAG" "$PWD/out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pagespeed-${{ inputs.distro }}-nginx${{ inputs.nginx_version }}
+          path: out/
+          if-no-files-found: error
+      - name: Release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RTAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum ./*.so > SHA256SUMS
+          gh release create "$RTAG" ./*.so SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --title "PageSpeed module for nginx.org ${{ inputs.nginx_version }} (${{ inputs.distro }})" \
+            --notes "ngx_pagespeed_module built from ${{ inputs.module_tag }} of We-Amp/mod_pagespeed against nginx ${{ inputs.nginx_version }}, inside a ${{ inputs.distro }} container, then loaded into the nginx.org package of the same version and checked."
