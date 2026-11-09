@@ -48,6 +48,9 @@ cp objs/ngx_http_modsecurity_module.so "$so"
 
 # --- test: the module has to load and has to block ---------------------------------------------------------------------------
 t="$(mktemp -d)"
+# mktemp makes the folder private (0700), and the workers of the nginx.org package run as the user "nginx", so they could not
+# read the test page: try_files answers 500 when stat() is refused. Let them in.
+chmod 755 "$t"
 mkdir -p "$t/www"
 echo hello > "$t/www/index.html"
 cat > "$t/simple.conf" << 'EOF'
@@ -105,5 +108,9 @@ if [ -f /etc/modsecurity/crs/crs-setup.conf ] && ls /usr/share/modsecurity-crs/r
   nginx -s stop -c "$t/nginx-crs.conf" -p "$t/"
 else
   echo "NOTE  the OWASP rule set is not where this script looks on ${codename}; only the plain rule was checked"
+fi
+if [ "$fail" != 0 ]; then
+  echo "--- nginx error logs ---"
+  for f in "$t"/*.log; do echo "# $f"; tail -n 12 "$f"; done
 fi
 exit "$fail"
