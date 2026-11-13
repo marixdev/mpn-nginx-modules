@@ -34,11 +34,12 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        codename: [jammy, noble, resolute, bookworm, trixie]
+        # Ubuntu 26.04 (resolute) is left out: nginx.org has no package for it, and Mini Panel uses the distribution's own nginx
+        # 1.28.3 and packaged modules there.
+        codename: [jammy, noble, bookworm, trixie]
         include:
           - { codename: jammy, family: ubuntu, image: "ubuntu:22.04" }
           - { codename: noble, family: ubuntu, image: "ubuntu:24.04" }
-          - { codename: resolute, family: ubuntu, image: "ubuntu:26.04" }
           - { codename: bookworm, family: debian, image: "debian:12" }
           - { codename: trixie, family: debian, image: "debian:13" }
     steps:
