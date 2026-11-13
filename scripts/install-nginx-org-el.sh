@@ -6,7 +6,8 @@ set -euo pipefail
 version="${1:?nginx version, such as 1.28.3}"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad nginx version" >&2; exit 2; }
 
-dnf -y -q install ca-certificates curl gnupg2 dnf-plugins-core > /dev/null
+# curl-minimal, which the images ship, already gives the curl command; asking for "curl" would conflict with it on EL9.
+dnf -y -q install ca-certificates gnupg2 dnf-plugins-core > /dev/null
 
 # The signing key must be the one nginx.org publishes; dnf then checks every package against it.
 curl -fsSL --proto '=https' https://nginx.org/keys/nginx_signing.key -o /tmp/nginx_signing.key

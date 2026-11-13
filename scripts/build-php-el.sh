@@ -47,9 +47,14 @@ ossl="$work/ossl"
 
 # PHP before 7.4 finds the image libraries by folder, and gd's options differ between 7.3 and older.
 gd=(--with-gd --with-jpeg-dir=/usr --with-png-dir=/usr --with-webp-dir=/usr --with-freetype-dir=/usr)
-# GCC 11 and newer reject some old code by default; these keep the 2019 sources compiling as they did then.
-export CFLAGS="-O2 -fPIC -fcommon -Wno-error -std=gnu99"
-export CXXFLAGS="-O2 -fPIC -std=gnu++11"
+# GCC 11 and newer reject some old code by default (GCC 14 on EL10 turns pointer type mismatches into errors, and libxml2 2.12
+# made some pointers const); these keep the 2019 sources compiling as they did then. ICU 61 and newer no longer put their names
+# in the global namespace, which ext/intl of PHP 7.0 and 7.1 expect.
+export CFLAGS="-O2 -fPIC -fcommon -std=gnu99 -Wno-error -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration -Wno-error=implicit-int"
+export CXXFLAGS="-O2 -fPIC -std=gnu++11 -DU_USING_ICU_NAMESPACE=1"
+# The OpenSSL 1.1.1 linked into php must stay private: the system libcurl loads OpenSSL 3, and exported 1.1.1 names would take the
+# place of its functions (https through curl then fails).
+export LDFLAGS="-Wl,--exclude-libs,ALL"
 export PKG_CONFIG_PATH="$ossl/lib64/pkgconfig:$ossl/lib/pkgconfig"
 cd php
 ./configure --prefix="$prefix" --with-config-file-path="$prefix/etc" --with-config-file-scan-dir="$prefix/etc/conf.d" \

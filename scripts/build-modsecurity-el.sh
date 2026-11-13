@@ -72,12 +72,16 @@ yajl_a="$(find "$prefix" -name 'libyajl_s.a' | head -1)"
 
 # The connector links -lmodsecurity; with only the .a in that folder, the linker takes the static one. Its own dependencies are
 # added after it, in the order the linker needs them.
+# The connector's config only knows how to add yajl (YAJL_EXTRA); the other libraries a static libmodsecurity needs are appended
+# to the same place, so they come after -lmodsecurity both in its link test and in the link of the module.
 deps="$yajl_a -lpcre2-8 -lxml2 -lcurl -lstdc++ -lm"
+sed -i "s|^YAJL_EXTRA=\$|YAJL_EXTRA=\"$deps\"|" "$work/connector/config"
+grep -q "^YAJL_EXTRA=\"$deps\"" "$work/connector/config" || { echo "could not add the libraries to the connector's config" >&2; exit 1; }
 args="$(nginx -V 2>&1 | sed -n 's/^configure arguments: //p' | sed -E "s/--with-cc-opt='[^']*'//; s/--with-ld-opt='[^']*'//")"
 cd nginx
-MODSECURITY_INC="$prefix/include" MODSECURITY_LIB="$libdir" NGX_IGNORE_RPATH=YES \
-  eval ./configure "$args" --with-ld-opt="'$deps'" --add-dynamic-module="$work/connector" > "$work/configure.log" 2>&1 ||
-  { tail -40 "$work/configure.log"; exit 1; }
+export MODSECURITY_INC="$prefix/include" MODSECURITY_LIB="$libdir" NGX_IGNORE_RPATH=YES
+eval ./configure "$args" --add-dynamic-module="$work/connector" > "$work/configure.log" 2>&1 ||
+  { grep -A12 'ModSecurity library' "$work/objs/autoconf.err" 2> /dev/null | tail -20; tail -20 "$work/configure.log"; tail -30 objs/autoconf.err 2> /dev/null; exit 1; }
 make -j"$(nproc)" modules > "$work/make.log" 2>&1 || { tail -40 "$work/make.log"; exit 1; }
 
 mkdir -p "$out"
