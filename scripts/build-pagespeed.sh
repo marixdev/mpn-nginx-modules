@@ -19,12 +19,15 @@ case "$(uname -m)" in
 esac
 name="ngx_pagespeed_module-${distro}-nginx${ngx}${suffix}.so"
 
+# el9 and el10 are built in AlmaLinux; the same file serves Rocky Linux and CentOS Stream of that major version.
 case "$distro" in
   jammy) image="ubuntu:22.04"; family=ubuntu ;;
   noble) image="ubuntu:24.04"; family=ubuntu ;;
   resolute) image="ubuntu:26.04"; family=ubuntu ;;
   bookworm) image="debian:12"; family=debian ;;
   trixie) image="debian:13"; family=debian ;;
+  el9) image="almalinux:9"; family=el ;;
+  el10) image="almalinux:10"; family=el ;;
   *) echo "unknown distro: $distro" >&2; exit 2 ;;
 esac
 [[ "$ngx" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad nginx version" >&2; exit 2; }
@@ -58,11 +61,15 @@ ls -l "$so"
 file "$so" 2> /dev/null || true
 
 # --- test in a clean container of the same distribution -------------------------------------------------------------------------
-cp "$here/install-nginx-org.sh" "$tmp/"
+cp "$here/install-nginx-org.sh" "$here/install-nginx-org-el.sh" "$tmp/"
 cat > "$tmp/check.sh" << 'EOS'
 set -euo pipefail
 codename="$1"; family="$2"; ngx="$3"; so="$4"
-bash /t/install-nginx-org.sh "$codename" "$family" "$ngx"
+if [ "$family" = el ]; then
+  bash /t/install-nginx-org-el.sh "$ngx"
+else
+  bash /t/install-nginx-org.sh "$codename" "$family" "$ngx"
+fi
 mkdir -p /w/www /w/cache
 printf '<html><head></head><body>\n\n   <p>  hello   </p>\n\n<!-- a comment -->\n<img src="/x.png">\n</body></html>\n' > /w/www/index.html
 cat > /w/nginx.conf << EOF

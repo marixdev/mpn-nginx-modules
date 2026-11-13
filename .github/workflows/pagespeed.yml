@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       distro:
-        description: "jammy, noble, resolute, bookworm or trixie"
+        description: "jammy, noble, resolute, bookworm, trixie, el9 or el10"
         required: true
         default: noble
       arch:
