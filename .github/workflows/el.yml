@@ -1,0 +1,115 @@
+name: EL packages (AlmaLinux, Rocky Linux, CentOS Stream 9 and 10)
+
+# Builds, inside an AlmaLinux container of each major version and on both CPUs, what Mini Panel needs on the RHEL family and cannot
+# get from a repository: the ModSecurity module (libmodsecurity linked in, EPEL 10 has none), the OWASP Core Rule Set, and PHP 7.0
+# to 7.3 (Remi stops at 7.4). AlmaLinux, Rocky Linux and CentOS Stream of one major version share the same libraries, so one build
+# serves all three. Every file is checked before it is uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a release with this tag (empty: only build and test)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/el.yml"
+      - "scripts/build-modsecurity-el.sh"
+      - "scripts/build-php-el.sh"
+      - "scripts/install-nginx-org-el.sh"
+
+permissions:
+  contents: read
+
+env:
+  NGINX_VERSION: "1.28.3"
+  NGINX_SHA256: "2c96a946bfb0882a21744ed429770a2123ae1828c7c48665092993ddee91a918"
+  CONNECTOR_VERSION: "1.0.4"
+  CONNECTOR_SHA256: "6bdc7570911be884c1e43aaf85046137f9fde0cfa0dd4a55b853c81c45a13313"
+  MODSEC_VERSION: "3.0.17"
+  MODSEC_SHA256: "f283b33d5c21130fd3a15c84a93a1abe12bd1949edaf44288b12af571b671a50"
+  YAJL_VERSION: "2.1.0"
+  YAJL_SHA256: "3fb73364a5a30efe615046d07e6db9d09fd2b41c763c5f7d3bfb121cd5c5ac5a"
+  CRS_VERSION: "4.25.2"
+  CRS_SHA256: "a3ecf5d5b0f8001e2eaf2006448fc8e22d6b645d7fc1c71268be5b99a7395a2d"
+  OPENSSL_VERSION: "1.1.1w"
+  OPENSSL_SHA256: "cf3098950cb4d853ad95c0841f1f9c6d3dc102dccfcacd521d93925208b76ac8"
+
+jobs:
+  modsecurity:
+    name: ModSecurity ${{ matrix.el }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    container: almalinux:${{ matrix.el == 'el9' && '9' || '10' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        el: [el9, el10]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and test
+        run: bash scripts/build-modsecurity-el.sh "${{ matrix.el }}" "$PWD/out"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: modsecurity-${{ matrix.el }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: warn
+
+  php:
+    name: PHP ${{ matrix.php.v }} ${{ matrix.el }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    container: almalinux:${{ matrix.el == 'el9' && '9' || '10' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        el: [el9, el10]
+        arch: [amd64, arm64]
+        php:
+          - { v: "7.0.33", sha: "ab8c5be6e32b1f8d032909dedaaaa4bbb1a209e519abb01a52ce3914f9a13d96" }
+          - { v: "7.1.33", sha: "bd7c0a9bd5433289ee01fd440af3715309faf583f75832b64fe169c100d52968" }
+          - { v: "7.2.34", sha: "409e11bc6a2c18707dfc44bc61c820ddfd81e17481470f3405ee7822d8379903" }
+          - { v: "7.3.33", sha: "166eaccde933381da9516a2b70ad0f447d7cec4b603d07b9a916032b215b90cc" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and test
+        run: bash scripts/build-php-el.sh "${{ matrix.el }}" "${{ matrix.php.v }}" "${{ matrix.php.sha }}" "$PWD/out"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: php-${{ matrix.php.v }}-${{ matrix.el }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: warn
+
+  release:
+    name: Publish
+    needs: [modsecurity, php]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RTAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir rel
+          find art -type f \( -name '*.so' -o -name '*.tar.xz' -o -name 'coreruleset-*.tar.gz' \) -exec cp -n {} rel/ \;
+          cd rel
+          sha256sum * | LC_ALL=C sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$RTAG" ./* --repo "$GITHUB_REPOSITORY" --title "EL 9 and 10 packages ($RTAG)" \
+            --notes "Built by el.yml inside AlmaLinux 9 and 10 containers, on x86-64 and arm64, for AlmaLinux, Rocky Linux and CentOS Stream of the same major version. ModSecurity-nginx ${CONNECTOR_VERSION} with libmodsecurity ${MODSEC_VERSION} linked in, for nginx ${NGINX_VERSION} from nginx.org; OWASP CRS ${CRS_VERSION}; PHP 7.0 to 7.3 under /opt/mpn/php, with OpenSSL ${OPENSSL_VERSION} linked in. Each file was tested before upload."
