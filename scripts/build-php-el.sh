@@ -45,6 +45,11 @@ ossl="$work/ossl"
 (cd openssl && ./config --prefix="$ossl" --openssldir=/etc/pki/tls no-shared no-tests -fPIC > "$work/openssl.log" 2>&1 &&
   make -j"$(nproc)" >> "$work/openssl.log" 2>&1 && make install_sw >> "$work/openssl.log" 2>&1) || { tail -30 "$work/openssl.log"; exit 1; }
 
+# intl is built only on EL9: ext/intl of PHP 7.0 to 7.3 does not compile against ICU 74 (EL10), which changed the return type
+# of BreakIterator::operator== and removed TRUE and FALSE. Mini Panel does not install intl on Debian and Ubuntu either, so a site
+# loses nothing it had there.
+intl=()
+[ "$el" = el9 ] && intl=(--enable-intl)
 # PHP before 7.4 finds the image libraries by folder, and gd's options differ between 7.3 and older.
 gd=(--with-gd --with-jpeg-dir=/usr --with-png-dir=/usr --with-webp-dir=/usr --with-freetype-dir=/usr)
 # GCC 11 and newer reject some old code by default (GCC 14 on EL10 turns pointer type mismatches into errors, and libxml2 2.12
@@ -63,7 +68,7 @@ cd php
   --with-openssl="$ossl" --with-zlib --with-curl --with-libxml-dir=/usr \
   --enable-mbstring --enable-xml --enable-dom --enable-simplexml --enable-xmlreader --enable-xmlwriter \
   --with-mysqli=mysqlnd --with-pdo-mysql=mysqlnd --enable-mysqlnd --with-pdo-sqlite --with-sqlite3 \
-  --enable-zip --with-libzip --with-bz2 --enable-bcmath --enable-intl --enable-exif --enable-ftp --enable-sockets \
+  --enable-zip --with-libzip --with-bz2 --enable-bcmath "${intl[@]}" --enable-exif --enable-ftp --enable-sockets \
   --enable-opcache "${gd[@]}" > "$work/configure.log" 2>&1 || { tail -40 "$work/configure.log"; exit 1; }
 make -j"$(nproc)" > "$work/make.log" 2>&1 || { grep -m5 -B2 -A5 ' error' "$work/make.log" || tail -40 "$work/make.log"; exit 1; }
 make install > "$work/install.log" 2>&1 || { tail -20 "$work/install.log"; exit 1; }
@@ -90,7 +95,9 @@ fail=0
 expect() { if [ "$2" = "$3" ]; then echo "ok    $1"; else echo "FAIL  $1 -> $3 (wanted $2)"; fail=1; fi; }
 "$prefix/bin/php" -v
 expect "php -v says $ver" "$ver" "$("$prefix/bin/php" -r 'echo PHP_VERSION;')"
-for e in curl gd mbstring mysqli pdo_mysql openssl xml dom simplexml zip zlib intl bcmath exif Zend\ OPcache; do
+exts=(curl gd mbstring mysqli pdo_mysql openssl xml dom simplexml zip zlib bcmath exif "Zend OPcache")
+[ "${#intl[@]}" = 0 ] || exts+=(intl)
+for e in "${exts[@]}"; do
   expect "extension $e loads" yes "$("$prefix/bin/php" -r "echo extension_loaded('$e') ? 'yes' : 'no';")"
 done
 expect "gd has jpeg, png, webp, freetype" 1111 "$("$prefix/bin/php" -r '$i=gd_info(); echo (int)$i["JPEG Support"],(int)$i["PNG Support"],(int)$i["WebP Support"],(int)$i["FreeType Support"];')"
