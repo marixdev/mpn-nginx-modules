@@ -48,6 +48,16 @@ tar xzf "$tmp/src.tgz" -C "$tmp/ws" --strip-components=1
 rm -f "$tmp/src.tgz"
 df -h / | tail -1
 
+# The el10 branch of We-Amp's script writes the x86-64 triplet into its gcc-toolset-15 links (the el9 branch takes the CPU into
+# account). On arm64 the same links are needed under the aarch64 names, so the script is corrected here before it runs.
+if [ "$distro" = el10 ] && [ "$suffix" = "-arm64" ]; then
+  f="$tmp/ws/install/nginx/build_module_in_container.sh"
+  n="$(grep -c 'x86_64-linux-gnu\|x86_64-redhat-linux' "$f")"
+  sed -i '/elif \[ "${DISTRO}" = "el10" \]; then/,/--config=clang-libstdcxx15/{s/x86_64-linux-gnu/aarch64-linux-gnu/g; s/x86_64-redhat-linux/aarch64-redhat-linux/g}' "$f"
+  echo "el10 arm64: the toolchain links of We-Amp's script now use aarch64 ($n x86-64 names in the file before)"
+  grep -n 'ln -sfn "${GCC15_PREFIX}' "$f"
+fi
+
 mkdir -p "$tmp/ws/out"
 cores="$(nproc)"
 docker run --rm --init -e HOME=/workspace -e BAZEL_CPUS="$cores" -e MAKE_JOBS="$cores" \
