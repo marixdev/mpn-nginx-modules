@@ -53,14 +53,18 @@ df -h / | tail -1
 if [ "$distro" = el10 ] && [ "$suffix" = "-arm64" ]; then
   f="$tmp/ws/install/nginx/build_module_in_container.sh"
   n="$(grep -c 'x86_64-linux-gnu\|x86_64-redhat-linux' "$f")"
-  # The lines to change are the ones of the el10 branch that make the gcc-toolset-15 folders and links.
-  start="$(grep -n '^elif \[ "\${DISTRO}" = "el10" \]; then' "$f" | head -1 | cut -d: -f1)"
-  end="$(awk -v s="$start" 'NR > s && /--config=clang-libstdcxx15/ { print NR; exit }' "$f")"
-  [ -n "$start" ] && [ -n "$end" ] || { echo "the el10 branch of We-Amp's script was not found" >&2; exit 1; }
-  sed -i "${start},${end}s/x86_64-linux-gnu/aarch64-linux-gnu/g; ${start},${end}s/x86_64-redhat-linux/aarch64-redhat-linux/g" "$f"
-  echo "el10 arm64: lines ${start} to ${end} of We-Amp's script now use aarch64 ($n x86-64 names in the file before)"
-  sed -n "${start},${end}p" "$f" | grep -n 'ln -sfn\|mkdir -p'
-  if sed -n "${start},${end}p" "$f" | grep -q x86_64; then echo "x86_64 is still in the el10 branch" >&2; exit 1; fi
+  # The three links are the lines that start with "ln -sfn \"${GCC15_PREFIX}" and the mkdir before them; in the file they come after
+  # the line that starts the el10 branch. Only those lines are changed.
+  # The script has two el10 branches (the nginx source, then the toolchain); the toolchain one is the one with GCC15_PREFIX.
+  start="$(awk '/^elif \[ "\$\{DISTRO\}" = "el10" \]; then/ { s = NR } s && index($0, "GCC15_PREFIX=") { print s; exit }' "$f")"
+  [ -n "$start" ] || { echo "the el10 toolchain branch of We-Amp's script was not found" >&2; exit 1; }
+  # The search stops at the flag itself ("--config=..." in quotes), not at the comments above it that name the same config.
+  lines="$(awk -v s="$start" 'NR > s && index($0, "\"--config=clang-libstdcxx15\"") { exit } NR > s && (index($0, "  mkdir -p /usr/include/c++ ") == 1 || index($0, "  ln -sfn \"${GCC15_PREFIX}") == 1) { print NR }' "$f")"
+  [ "$(echo "$lines" | wc -l)" = 4 ] || { echo "the links of the el10 branch were not found (lines: $lines)" >&2; exit 1; }
+  for l in $lines; do sed -i "${l}s/x86_64-linux-gnu/aarch64-linux-gnu/g; ${l}s/x86_64-redhat-linux/aarch64-redhat-linux/g" "$f"; done
+  echo "el10 arm64: the links of We-Amp's script now use aarch64"
+  for l in $lines; do sed -n "${l}p" "$f"; done
+  for l in $lines; do if sed -n "${l}p" "$f" | grep -q x86_64; then echo "x86_64 is still on line $l" >&2; exit 1; fi; done
 fi
 
 mkdir -p "$tmp/ws/out"
