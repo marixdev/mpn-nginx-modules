@@ -25,13 +25,16 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.codename }}
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.codename }} ${{ matrix.arch }}
+    # The module is built for the CPU of the runner, so arm64 runs on an arm64 runner (free for public repositories).
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
+        codename: [jammy, noble, resolute, bookworm, trixie]
         include:
           - { codename: jammy, family: ubuntu, image: "ubuntu:22.04" }
           - { codename: noble, family: ubuntu, image: "ubuntu:24.04" }
@@ -51,7 +54,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
-          name: modsecurity-${{ matrix.codename }}
+          name: modsecurity-${{ matrix.codename }}-${{ matrix.arch }}
           path: out/
           if-no-files-found: warn
 

@@ -3,6 +3,8 @@
 # distribution, then loads it into the nginx.org package of the same version and checks that PageSpeed rewrites a page.
 # Runs on a GitHub-hosted runner (it needs docker).
 #   build-pagespeed.sh <distro> <nginx version> <nginx sha256> <We-Amp module tag> <outdir>
+# The module is built for the CPU of the runner: an x86-64 runner gives the file with no suffix (the name the panel has always
+# used), an arm64 runner gives the file ending in -arm64.
 set -euo pipefail
 distro="${1:?noble|jammy|bookworm|trixie|resolute}"
 ngx="${2:?nginx version}"
@@ -10,6 +12,12 @@ ngxsha="${3:?nginx sha256}"
 tag="${4:?module tag, such as module-v2.8.1}"
 out="${5:?output directory}"
 here="$(cd "$(dirname "$0")" && pwd)"
+case "$(uname -m)" in
+  x86_64) suffix="" ;;
+  aarch64) suffix="-arm64" ;;
+  *) echo "unsupported CPU $(uname -m)" >&2; exit 2 ;;
+esac
+name="ngx_pagespeed_module-${distro}-nginx${ngx}${suffix}.so"
 
 case "$distro" in
   jammy) image="ubuntu:22.04"; family=ubuntu ;;
@@ -42,11 +50,12 @@ cores="$(nproc)"
 docker run --rm --init -e HOME=/workspace -e BAZEL_CPUS="$cores" -e MAKE_JOBS="$cores" \
   -e NGX_SRC_MODE_OVERRIDE=vanilla -e NGINX_SRC_VERSION="$ngx" -e NGINX_SRC_SHA256="$ngxsha" \
   -v "$tmp/ws":/workspace -w /workspace "$image" \
-  ./install/nginx/build_module_in_container.sh "$distro" -o "/workspace/out/ngx_pagespeed_module-${distro}-nginx${ngx}.so"
+  ./install/nginx/build_module_in_container.sh "$distro" -o "/workspace/out/$name"
 
-so="$out/ngx_pagespeed_module-${distro}-nginx${ngx}.so"
-cp "$tmp/ws/out/ngx_pagespeed_module-${distro}-nginx${ngx}.so" "$so"
+so="$out/$name"
+cp "$tmp/ws/out/$name" "$so"
 ls -l "$so"
+file "$so" 2> /dev/null || true
 
 # --- test in a clean container of the same distribution -------------------------------------------------------------------------
 cp "$here/install-nginx-org.sh" "$tmp/"

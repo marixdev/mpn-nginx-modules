@@ -34,17 +34,24 @@ eval ./configure "$args" --add-dynamic-module="$work/connector" > "$work/configu
 make -j"$(nproc)" modules > "$work/make.log" 2>&1 || { tail -40 "$work/make.log"; exit 1; }
 
 mkdir -p "$out"
-so="$out/ngx_http_modsecurity_module-${codename}-nginx${NGINX_VERSION}.so"
+# x86-64 keeps the name without a suffix (the name the panel has always used); arm64 adds -arm64.
+case "$(uname -m)" in
+  x86_64) suffix="" ;;
+  aarch64) suffix="-arm64" ;;
+  *) echo "unsupported CPU $(uname -m)" >&2; exit 2 ;;
+esac
+so="$out/ngx_http_modsecurity_module-${codename}-nginx${NGINX_VERSION}${suffix}.so"
 cp objs/ngx_http_modsecurity_module.so "$so"
 {
   echo "distro: ${family} ${codename}"
+  echo "cpu: $(uname -m)"
   echo "nginx: ${NGINX_VERSION} (nginx.org package)"
   echo "connector: ${CONNECTOR_VERSION}"
   echo "libmodsecurity: $(dpkg-query -W -f='${Package} ${Version}' 'libmodsecurity3*' 2> /dev/null | head -1)"
   echo "glibc: $(ldd --version | head -1)"
   echo "links:"
   ldd "$so" | sed 's/^/  /'
-} | tee "$out/info-${codename}.txt"
+} | tee "$out/info-${codename}${suffix}.txt"
 
 # --- test: the module has to load and has to block ---------------------------------------------------------------------------
 t="$(mktemp -d)"

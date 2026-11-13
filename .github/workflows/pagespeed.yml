@@ -7,6 +7,12 @@ on:
         description: "jammy, noble, resolute, bookworm or trixie"
         required: true
         default: noble
+      arch:
+        description: "CPU to build for: amd64 or arm64"
+        required: true
+        default: amd64
+        type: choice
+        options: [amd64, arm64]
       nginx_version:
         description: "nginx.org version to build for"
         required: true
@@ -29,8 +35,9 @@ permissions:
 
 jobs:
   build:
-    name: ${{ inputs.distro }}, nginx ${{ inputs.nginx_version }}
-    runs-on: ubuntu-24.04
+    name: ${{ inputs.distro }} ${{ inputs.arch }}, nginx ${{ inputs.nginx_version }}
+    # The module is built for the CPU of the runner, so arm64 needs an arm64 runner (free for public repositories).
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 350
     permissions:
       contents: write
@@ -45,6 +52,7 @@ jobs:
           df -h /
           free -m
           nproc
+          uname -m
       - name: Build and test
         env:
           DISTRO: ${{ inputs.distro }}
@@ -54,7 +62,7 @@ jobs:
         run: bash scripts/build-pagespeed.sh "$DISTRO" "$NGX" "$NGX_SHA" "$TAG" "$PWD/out"
       - uses: actions/upload-artifact@v4
         with:
-          name: pagespeed-${{ inputs.distro }}-nginx${{ inputs.nginx_version }}
+          name: pagespeed-${{ inputs.distro }}-${{ inputs.arch }}-nginx${{ inputs.nginx_version }}
           path: out/
           if-no-files-found: error
       - name: Release
@@ -67,5 +75,5 @@ jobs:
           cd out
           sha256sum ./*.so > SHA256SUMS
           gh release create "$RTAG" ./*.so SHA256SUMS --repo "$GITHUB_REPOSITORY" \
-            --title "PageSpeed module for nginx.org ${{ inputs.nginx_version }} (${{ inputs.distro }})" \
-            --notes "ngx_pagespeed_module built from ${{ inputs.module_tag }} of We-Amp/mod_pagespeed against nginx ${{ inputs.nginx_version }}, inside a ${{ inputs.distro }} container, then loaded into the nginx.org package of the same version and checked."
+            --title "PageSpeed module for nginx.org ${{ inputs.nginx_version }} (${{ inputs.distro }}, ${{ inputs.arch }})" \
+            --notes "ngx_pagespeed_module built from ${{ inputs.module_tag }} of We-Amp/mod_pagespeed against nginx ${{ inputs.nginx_version }}, inside a ${{ inputs.distro }} container on ${{ inputs.arch }}, then loaded into the nginx.org package of the same version and checked."
